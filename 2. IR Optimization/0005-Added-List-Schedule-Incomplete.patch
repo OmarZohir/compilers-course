@@ -1,0 +1,161 @@
+From 7471d41be19f4ef947edade7a5454c8d11fefb0b Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Wed, 10 Mar 2021 23:52:50 +0100
+Subject: [PATCH 5/5] Added List Schedule Incomplete
+
+---
+ ILPEstimator/Pass.cpp | 91 ++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 86 insertions(+), 5 deletions(-)
+
+diff --git a/ILPEstimator/Pass.cpp b/ILPEstimator/Pass.cpp
+index ff55ece..a57a2ca 100644
+--- a/ILPEstimator/Pass.cpp
++++ b/ILPEstimator/Pass.cpp
+@@ -2,6 +2,7 @@
+ #include "llvm/IR/BasicBlock.h"
+ #include "llvm/IR/Instructions.h"
+ #include "llvm/Support/raw_ostream.h"
++#include "llvm/Support/CommandLine.h"
+ #include <iterator>
+ #include <iostream>
+ #include <set>
+@@ -39,7 +40,6 @@ public:
+   static char ID;
+   int WCET;
+   int maxLatency;
+-  int NumResources = 10;
+   
+   std::map<const Instruction *, int> ASAPschedule;
+   std::map<const Instruction *, int> ALAPschedule;
+@@ -47,8 +47,6 @@ public:
+   
+   ILPEstimator() : BasicBlockPass(ID) {}
+ 
+-  ResourceManager rm = ResourceManager(NumResources);
+-
+   bool runOnBasicBlock(BasicBlock &BB) override {
+     errs() << "Hello: ";
+     errs().write_escaped(BB.getName()) << "\n";
+@@ -78,7 +76,6 @@ public:
+     OS << "Maximum Latency is: " << maxLatency << "\n";
+   }
+ 
+-
+   int getInstructionLatency(const Instruction *I)
+   {
+     if(!I) return 0;
+@@ -115,7 +112,7 @@ public:
+       maxLatency = std::max(maxLatency, schedule[&inst] + getInstructionLatency(&inst));
+     }
+     return maxLatency;
+-}
++  }
+ 
+   void scheduleALAP(BasicBlock &BB, std::map<const Instruction *, int> &schedule, int ASAPFinishTime) {
+     // Iterate over BB’s instructions in reverse
+@@ -136,7 +133,85 @@ public:
+     }
+   }
+ 
++  void GetReadyInst(BasicBlock &BB,  std::set<Instruction *> &ready_list){
++    //Get operations that are not used by any other operations 
++    //i.e, their ASAP schedule is zero
++    //loop over all instructions to find instructions scheduled at time zero
++    for (Instruction &inst : BB) {
++      if(ASAPschedule[&inst] == 0){
++        ready_list.add(&inst);
++      }
++    }
++  }
++ 
++  //Get a set of all instructions in the Basic Block
++  void GetAllInstList(BasicBlock &BB, std::set<Instruction *> &All_list){
++    for (Instruction &inst : BB) {
++      All_list.add(&inst);
++    }
++  }
++
++
++  void scheduleList(BasicBlock &BB, std::map<const Instruction *, int> &schedule, int NumResources){
++    //ready_pred_finished: Ready instructions with all of its predecessors finished
++    //curCycle_list: Operations running in the current cycle
++    //NextCycle_list: Operations that will be still running in the next cycle
++    std::set<Instruction *> ready_list, ready_pred_finished, All_list, scheduled_list, curCycle_list, NextCycle_list; 
++    //Get a list of all instructions 
++    GetAllInstList(BB,All_list);
++    // Get A list of the ready Instructions
++    GetReadyInst(BB,ready_list);
++
++
++    ready_pred_finished = ready_list;
++    int cur_cycle = 0;
++
++    ResourceManager rm = ResourceManager(ResourceCount);
++    Instruction *selectedInst;
++
++    while(scheduled_list != All_list){
++      rm.reset();
++      //Select all possible operations until all resources are used for the current cycle
++      while(ready_pred_finished != NULL){
++        selectedInst = selectNextOperation(ready_pred_finished, rm);
++        if(selectedInst){
++          schedule[selectedInst] = cur_cycle;
++          curCycle_list.add(selectedInst);
++          
++          // if the added instruction latency is 1, then add it to the scheduled list, and erase it from the ready predecessors finished list
++          if(getInstructionLatency(selectedInst) == 1){
++            scheduled_list.add(selectedInst);
++            ready_pred_finished.erase(selectedInst);
++          }
++          // if the added instruction latency is 2, check if it was running in the past cycle or not
++          else if(getInstructionLatency(selectedInst) == 2){
++            //if this instruction was running in the past cycle
++            if (NextCycle_list.find(selectedInst) != NextCycle_list.end()){
++              //remove it, return to previous capacity of the processor
++              scheduled_list.add(selectedInst);
++              ready_pred_finished.erase(selectedInst);
++              rm.totalRes++;
++            }
++            // if this instruction was not running in the past cycle, add it to the list of nextcycle instructions, and reduce total resources by 1 in the next cycle
++            else
++            {
++              NextCycle_list.add(selectedInst);
++              rm.totalRes--;
++            }   
++          }
++        }
++
++        else
++        //No more operations can be scheduled in the current cycle
++          break;
++      }
++
++      //TODO:Update the ready list and the ready_pred_finished list
++
++    }
++  }
+ 
++  
+ private: 
+   int instructionScore(Instruction *I){
+     //Get the slack of this instuction
+@@ -167,6 +242,7 @@ private:
+       }
+     }
+   }
++
+ }; // end of class ILPEstimator
+ 
+ }  // end of anonymous namespace
+@@ -178,3 +254,8 @@ static RegisterPass<ILPEstimator> X("ilp-estimate", "ILP Estimator Pass",
+                                     false /* Only looks at CFG */,
+                                     false /* Analysis Pass */);
+ 
++static cl::opt<int> ResourceCount(
++    "resources",
++    cl::init(1),
++    cl::desc("The number of resources for the list scheduler"));
++
+-- 
+2.17.1
+

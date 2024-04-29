@@ -1,0 +1,90 @@
+From 7ca83f46e2e2804dfcaf9377dde8b16d7ceac069 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Fri, 19 Feb 2021 04:07:36 +0100
+Subject: [PATCH 3/3] Added support for Constant i32 lowering
+
+---
+ lib/Target/AVR/AVRISelLowering.cpp | 53 ++++++++++++++++++++++++++++--
+ 1 file changed, 51 insertions(+), 2 deletions(-)
+
+diff --git a/lib/Target/AVR/AVRISelLowering.cpp b/lib/Target/AVR/AVRISelLowering.cpp
+index d8e8bc1f..f78a5772 100644
+--- a/lib/Target/AVR/AVRISelLowering.cpp
++++ b/lib/Target/AVR/AVRISelLowering.cpp
+@@ -120,6 +120,9 @@ AVRTargetLowering::AVRTargetLowering(AVRTargetMachine &tm)
+   setOperationAction(ISD::VAARG, MVT::Other, Expand);
+   setOperationAction(ISD::VACOPY, MVT::Other, Expand);
+ 
++  // Allow i32 constants as argument of intrinsics
++  setOperationAction(ISD::Constant, MVT::i32, Custom);
++
+   // Atomic operations which must be lowered to rtlib calls
+   for (MVT VT : MVT::integer_valuetypes()) {
+     setOperationAction(ISD::ATOMIC_SWAP, VT, Expand);
+@@ -663,8 +666,8 @@ SDValue AVRTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
+ 
+ SDValue AVRTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+   switch (Op.getOpcode()) {
+-  default:
+-    llvm_unreachable("Don't know how to custom lower this!");
++  //default:
++  //  llvm_unreachable("Don't know how to custom lower this!");
+   case ISD::SHL:
+   case ISD::SRA:
+   case ISD::SRL:
+@@ -709,6 +712,52 @@ void AVRTargetLowering::ReplaceNodeResults(SDNode *N,
+     }
+     break;
+   }
++
++  case ISD::Constant: {
++    assert(N->getValueType(0) == MVT::i32 && "Expected Constant<i32>");
++    // Lower Constant<i32> into a TargetConstant iff its use is an intrinsic
++    // otherwise split into two half-parts to allow further lowering
++    bool split = true;
++    for (const auto use : N->uses()) {
++        if (use->getOpcode() == ISD::INTRINSIC_VOID) {
++          split = false;
++        }
++    }
++
++    const uint32_t C = cast<ConstantSDNode>(N)->getZExtValue();
++    const uint16_t lo = C ;
++    const uint16_t hi = (C << 16);
++    if (split) {
++      // Split into Lo16, Hi16, low part first
++      // FIXME
++      // For this technique, I used X86ISelLowering_8cpp as a reference, lines 2658-2668
++      // Before splitting the value, cast into i32
++      //SDValue &Arg = N->getValue();
++      //Arg = DAG.getBitcast(MVT::i32, Arg);
++
++      //Splitting the value into two i16 types
++      SDValue Lo16, Hi16;
++      //Lo16 = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, Arg, DAG.getConstant(0, DL, MVT::i16));
++      Lo16 = DAG.getConstant(lo, DL, MVT::i16);
++      Hi16 = DAG.getConstant(hi, DL, MVT::i16); 
++      //Hi16 = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, Arg, DAG.getConstant(1, DL, MVT::i16));
++      //Lo16 = DAG.getConstant(0,DL,MV::16)
++
++      
++      Results.push_back(Lo16);
++      Results.push_back(Hi16);
++    }
++
++    else {
++      // Lower into a TargetConstant for __delay_builtin_ms
++      // FIXME
++      SDValue Res;
++      Res = DAG.getTargetConstant(C, DL, MVT::i32);
++      Results.push_back(Res);
++    }
++    break;
++  }
++
+   default: {
+     SDValue Res = LowerOperation(SDValue(N, 0), DAG);
+ 
+-- 
+2.17.1
+

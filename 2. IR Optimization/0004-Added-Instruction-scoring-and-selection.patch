@@ -1,0 +1,71 @@
+From 687a95e92531e7b700397c5bc73c0a898989467b Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Wed, 10 Mar 2021 22:18:37 +0100
+Subject: [PATCH 4/4] Added Instruction scoring and selection
+
+---
+ ILPEstimator/Pass.cpp | 37 +++++++++++++++++++++++++++++++++++--
+ 1 file changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/ILPEstimator/Pass.cpp b/ILPEstimator/Pass.cpp
+index 09f87ab..ff55ece 100644
+--- a/ILPEstimator/Pass.cpp
++++ b/ILPEstimator/Pass.cpp
+@@ -13,7 +13,7 @@ namespace {
+ class ResourceManager{
+   //Assumptions:
+   //1) All resources can provide any functionality needed by any instruction
+-  //2) Every instruction uses only one resource per cycle
++  //2) Every instruction uses only one resource at a time
+ public:
+   int totalRes, UsedRes;
+   
+@@ -134,7 +134,39 @@ public:
+         schedule[&*it] = EarliestUserALAP  - getInstructionLatency(&*it);
+       }
+     }
+-  }  
++  }
++
++
++private: 
++  int instructionScore(Instruction *I){
++    //Get the slack of this instuction
++    int criticalDistance = ALAPschedule[&*I] - ASAPschedule[&*I];
++    //Assuming maximum slack that can actually happen is 10,000 
++    int BasicScore = 10000 - criticalDistance;
++
++    if(rm.canSchedule(I))
++      return std::max(BasicScore,0); //just in case there is a slack that is larger than 10,000
++    else
++      return 0;
++
++  }
++
++
++  Instruction *selectNextOperation(std::set<Instruction *> &ready_list, ResourceManager &rm){
++    Instruction *nextOperation = NULL;
++    int maxScore = 0;
++    int currentScore = 0;
++
++    for (auto it : ready_list){
++      //if an instruction exists in the ready list
++      if (&*it) {          
++        currentScore = instructionScore(&*it); 
++        if(currentScore > maxScore){
++          nextOperation = &*it; maxScore = currentScore;
++        }
++      }
++    }
++  }
+ }; // end of class ILPEstimator
+ 
+ }  // end of anonymous namespace
+@@ -145,3 +177,4 @@ char ILPEstimator::ID = 0;
+ static RegisterPass<ILPEstimator> X("ilp-estimate", "ILP Estimator Pass",
+                                     false /* Only looks at CFG */,
+                                     false /* Analysis Pass */);
++
+-- 
+2.17.1
+

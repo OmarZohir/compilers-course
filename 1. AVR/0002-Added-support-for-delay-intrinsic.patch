@@ -1,0 +1,70 @@
+From 98adf88353b5c78808076f9ebd2c042d304bb69b Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Fri, 19 Feb 2021 04:05:23 +0100
+Subject: [PATCH 2/3] Added support for delay intrinsic
+
+---
+ include/llvm/IR/Intrinsics.td    |  1 +
+ include/llvm/IR/IntrinsicsAVR.td | 21 +++++++++++++++++++++
+ test/CodeGen/AVR/test-delay.ll   |  7 +++++++
+ 3 files changed, 29 insertions(+)
+ create mode 100644 include/llvm/IR/IntrinsicsAVR.td
+ create mode 100644 test/CodeGen/AVR/test-delay.ll
+
+diff --git a/include/llvm/IR/Intrinsics.td b/include/llvm/IR/Intrinsics.td
+index 14c88e51..4fb39dca 100644
+--- a/include/llvm/IR/Intrinsics.td
++++ b/include/llvm/IR/Intrinsics.td
+@@ -944,6 +944,7 @@ def int_ssa_copy : Intrinsic<[llvm_any_ty], [LLVMMatchType<0>],
+ include "llvm/IR/IntrinsicsPowerPC.td"
+ include "llvm/IR/IntrinsicsX86.td"
+ include "llvm/IR/IntrinsicsARM.td"
++include "llvm/IR/IntrinsicsAVR.td"
+ include "llvm/IR/IntrinsicsAArch64.td"
+ include "llvm/IR/IntrinsicsXCore.td"
+ include "llvm/IR/IntrinsicsHexagon.td"
+diff --git a/include/llvm/IR/IntrinsicsAVR.td b/include/llvm/IR/IntrinsicsAVR.td
+new file mode 100644
+index 00000000..10956167
+--- /dev/null
++++ b/include/llvm/IR/IntrinsicsAVR.td
+@@ -0,0 +1,21 @@
++//===- IntrinsicsAVR.td - Defines AVR intrinsics -----------*- tablegen -*-===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++//
++//===----------------------------------------------------------------------===//
++//
++// This file defines all of the AVR-specific intrinsics.
++//
++//===----------------------------------------------------------------------===//
++
++
++//===----------------------------------------------------------------------===//
++// TLS
++
++let TargetPrefix = "avr" in {  // All intrinsics start with "llvm.arm.".
++
++def int_avr_delay_cycles : GCCBuiltin<"__builtin_avr_delay_cycles">,
++    Intrinsic<[], [llvm_i32_ty], []>;
++
++} // end TargetPrefix
+\ No newline at end of file
+diff --git a/test/CodeGen/AVR/test-delay.ll b/test/CodeGen/AVR/test-delay.ll
+new file mode 100644
+index 00000000..fed4ba96
+--- /dev/null
++++ b/test/CodeGen/AVR/test-delay.ll
+@@ -0,0 +1,7 @@
++; RUN: llc -march=avr < %s
++define void @test() {
++    tail call void @llvm.avr.delay.cycles(i32 16000000)
++    ret void
++}
++
++declare void @llvm.avr.delay.cycles(i32)
+\ No newline at end of file
+-- 
+2.17.1
+

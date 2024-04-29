@@ -1,0 +1,103 @@
+From a4b3128a4c3e5e9d9928a74c662890f62ad850a3 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Wed, 10 Mar 2021 22:13:12 +0100
+Subject: [PATCH 3/3] Added Resource manager Implementation
+
+---
+ ILPEstimator/Pass.cpp | 45 +++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/ILPEstimator/Pass.cpp b/ILPEstimator/Pass.cpp
+index 23df32e..09f87ab 100644
+--- a/ILPEstimator/Pass.cpp
++++ b/ILPEstimator/Pass.cpp
+@@ -4,21 +4,51 @@
+ #include "llvm/Support/raw_ostream.h"
+ #include <iterator>
+ #include <iostream>
++#include <set>
+ 
+ using namespace llvm;
+ 
+ namespace {
++
++class ResourceManager{
++  //Assumptions:
++  //1) All resources can provide any functionality needed by any instruction
++  //2) Every instruction uses only one resource per cycle
++public:
++  int totalRes, UsedRes;
++  
++  ResourceManager(int n_resources){
++    totalRes = n_resources;
++  }
++
++  void reset(){
++    UsedRes = 0;
++  }
++
++  bool canSchedule(Instruction *I){
++    return (totalRes - UsedRes);  
++  }
++
++  void schedule(Instruction *I){
++    UsedRes += 1; totalRes -= 1;
++  }
++};
++
+ class ILPEstimator : public BasicBlockPass {
+ public:
+   static char ID;
+   int WCET;
+   int maxLatency;
++  int NumResources = 10;
++  
+   std::map<const Instruction *, int> ASAPschedule;
+   std::map<const Instruction *, int> ALAPschedule;
+-  //an extra map for cleaner printing
+-  std::map<const Instruction *, int, int> ASAPALAPschedule;
+-  ILPEstimator() : BasicBlockPass(ID) {}
++  std::set<Instruction *> ReadyList;
+   
++  ILPEstimator() : BasicBlockPass(ID) {}
++
++  ResourceManager rm = ResourceManager(NumResources);
++
+   bool runOnBasicBlock(BasicBlock &BB) override {
+     errs() << "Hello: ";
+     errs().write_escaped(BB.getName()) << "\n";
+@@ -30,7 +60,7 @@ public:
+     
+     maxLatency = scheduleASAP(BB,ASAPschedule);
+     scheduleALAP(BB,ALAPschedule,maxLatency);
+-    
++
+     return false;
+   }
+ 
+@@ -42,8 +72,10 @@ public:
+       it->first->dump(); 
+       OS << "ALAP:  " <<  it->second << "\n"; 
+       OS << "ASAP: " << ASAPschedule.at(it->first) << "\n";
++      OS << "Slack: " << it->second -  ASAPschedule.at(it->first) << "\n";
+     }
+-    OS << "Maximum Latency  is: " << maxLatency << "\n";
++
++    OS << "Maximum Latency is: " << maxLatency << "\n";
+   }
+ 
+ 
+@@ -102,8 +134,9 @@ public:
+         schedule[&*it] = EarliestUserALAP  - getInstructionLatency(&*it);
+       }
+     }
+-  }
++  }  
+ }; // end of class ILPEstimator
++
+ }  // end of anonymous namespace
+ 
+ 
+-- 
+2.17.1
+

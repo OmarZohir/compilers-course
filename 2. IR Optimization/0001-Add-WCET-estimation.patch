@@ -1,0 +1,65 @@
+From 0a8e6ccca682667cfa3936ad8cec7e4f301f4a46 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Sun, 7 Mar 2021 21:37:22 +0100
+Subject: [PATCH] Add WCET estimation
+
+---
+ ILPEstimator/Pass.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/ILPEstimator/Pass.cpp b/ILPEstimator/Pass.cpp
+index 31905ee..85b4757 100644
+--- a/ILPEstimator/Pass.cpp
++++ b/ILPEstimator/Pass.cpp
+@@ -9,18 +9,47 @@ namespace {
+ class ILPEstimator : public BasicBlockPass {
+ public:
+   static char ID;
++  int WCET;
+   ILPEstimator() : BasicBlockPass(ID) {}
+ 
+   bool runOnBasicBlock(BasicBlock &BB) override {
+     errs() << "Hello: ";
+     errs().write_escaped(BB.getName()) << "\n";
+ 
++    WCET = estimateWCET(BB);
+     return false;
+   }
+ 
+   void print(raw_ostream &OS, const Module* = 0) const override {
+-	OS << "No analysis results yet\n";
++	  OS << "WCET estimate: " << WCET << "\n";
+   }
++
++
++  int getInstructionLatency(const Instruction *I)
++  {
++    if(!I) return 0;
++    if(isa<LoadInst>(I)) return 2;
++    switch(I->getOpcode()) 
++    {
++      case Instruction::Mul:
++         return 2;
++      default:
++        return 1;
++    }
++  }
++
++  int estimateWCET(BasicBlock &BB) {
++    int wcet = 0;
++    for(Instruction &inst : BB) 
++    {
++      // FIXME, there should be some code here?
++      //Instruction* 
++      wcet += getInstructionLatency(&inst); 
++    }
++    return wcet;
++  }
++
++
+ }; // end of class ILPEstimator
+ }  // end of anonymous namespace
+ 
+-- 
+2.17.1
+

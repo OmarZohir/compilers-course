@@ -1,0 +1,66 @@
+From ad08286ebf435ff14c1be8113ef952f28f83fc6a Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Wed, 17 Feb 2021 21:04:08 +0100
+Subject: [PATCH] Added fixes for 16-bit compare
+
+---
+ lib/Target/AVR/AVRInstrInfo.td |  7 +++++++
+ test/CodeGen/AVR/nocp.ll       | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+ create mode 100644 test/CodeGen/AVR/nocp.ll
+
+diff --git a/lib/Target/AVR/AVRInstrInfo.td b/lib/Target/AVR/AVRInstrInfo.td
+index 7d1bfc8d..3422dcf8 100644
+--- a/lib/Target/AVR/AVRInstrInfo.td
++++ b/lib/Target/AVR/AVRInstrInfo.td
+@@ -2093,3 +2093,10 @@ def : Pat<(i8 (trunc (AVRlsr (AVRlsr (AVRlsr (AVRlsr (AVRlsr (AVRlsr (AVRlsr
+ def : Pat<(shl i16:$src1, (i8 1)),
+           (LSLWRd i16:$src1)>;
+ 
++// Fix arithmetic operations followed by compare 0 to skip the compare and use
++// the SREG values already present
++def : Pat<(AVRcmp (sub GPR8:$src1, GPR8:$src2), (i8 0)),
++          (SUBRdRr GPR8:$src1, GPR8:$src2)>;
++
++def : Pat<(AVRcmp (add IWREGS:$src1, imm0_63_neg:$src2), (i16 0)),
++          (SBIWRdK IWREGS:$src1, imm0_63_neg:$src2)>;
+\ No newline at end of file
+diff --git a/test/CodeGen/AVR/nocp.ll b/test/CodeGen/AVR/nocp.ll
+new file mode 100644
+index 00000000..ea39249c
+--- /dev/null
++++ b/test/CodeGen/AVR/nocp.ll
+@@ -0,0 +1,29 @@
++; RUN: llc < %s -march=avr | FileCheck %s
++; CHECK-LABEL: @nocmp8
++; CHECK: sub
++; CHECK-NOT: cp
++; CHECK: brne
++
++
++define i1 @nocmp8(i8 %a, i8 %b) {
++    %diff = sub i8 %a, %b
++    %cmp = icmp ne i8 %diff, 0
++    ret i1 %cmp
++}
++
++; CHECK-LABEL: @nocmp
++; CHECK: sbiw
++; CHECK-NOT: cp
++; CHECK: brne
++
++define void @nocmp(i16 %a) {
++entry:
++    br label %l.loop
++l.loop:
++    %a.phi = phi i16 [ %a, %entry ], [ %a.new, %l.loop ]
++    %a.new = sub i16 %a.phi, 1
++    %cmp = icmp ne i16 %a.new, 0
++    br i1 %cmp, label %l.loop, label %l.end
++l.end:
++    ret void
++}
+\ No newline at end of file
+-- 
+2.17.1
+

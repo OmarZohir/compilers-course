@@ -1,0 +1,112 @@
+From 4a0c5c025e35bc327a616f930355dde9a8b15517 Mon Sep 17 00:00:00 2001
+From: Roel Jordans <r.jordans@tue.nl>
+Date: Fri, 12 Jan 2018 17:41:37 +0100
+Subject: [PATCH] [AVR] Add the actual code generation for
+ __builtin_avr_delay_cycles
+
+---
+ lib/Target/AVR/AVRISelLowering.cpp | 67 ++++++++++++++++++++++++++++++++++++++
+ lib/Target/AVR/AVRISelLowering.h   |  2 ++
+ 2 files changed, 69 insertions(+)
+
+diff --git a/lib/Target/AVR/AVRISelLowering.cpp b/lib/Target/AVR/AVRISelLowering.cpp
+index 6184eca..f00c48d 100644
+--- a/lib/Target/AVR/AVRISelLowering.cpp
++++ b/lib/Target/AVR/AVRISelLowering.cpp
+@@ -1595,6 +1595,71 @@ MachineBasicBlock *AVRTargetLowering::insertMul(MachineInstr &MI,
+   return BB;
+ }
+ 
++MachineBasicBlock * AVRTargetLowering::insertDelayCycles(MachineInstr &MI,
++	  MachineBasicBlock *BB) const {
++  MachineFunction *F = BB->getParent();
++  MachineRegisterInfo &RI = F->getRegInfo();
++  const AVRTargetMachine &TM = (const AVRTargetMachine &)getTargetMachine();
++  const TargetInstrInfo &TII = *TM.getSubtargetImpl()->getInstrInfo();
++  DebugLoc dl = MI.getDebugLoc();
++
++  // Check the delay to see if we've got anything to do here
++  unsigned CycleCount = MI.getOperand(0).getImm();
++
++  // Reduce the CycleCount to compensate for loop operations
++  // FIXME
++
++  const BasicBlock *LLVM_BB = BB->getBasicBlock();
++  MachineFunction::iterator I;
++  for (I = F->begin(); I != F->end() && &(*I) != BB; ++I);
++  if (I != F->end()) ++I;
++
++  // Create loop block.
++  MachineBasicBlock *LoopBB = F->CreateMachineBasicBlock(LLVM_BB);
++  MachineBasicBlock *RemBB = F->CreateMachineBasicBlock(LLVM_BB);
++
++  F->insert(I, LoopBB);
++  F->insert(I, RemBB);
++
++  // Update machine-CFG edges by transferring all successors of the current
++  // block to the block containing instructions after shift.
++  RemBB->splice(RemBB->begin(), BB, std::next(MachineBasicBlock::iterator(MI)),
++     BB->end());
++  RemBB->transferSuccessorsAndUpdatePHIs(BB);
++
++  // Add edges BB => LoopBB => RemBB, BB => RemBB, LoopBB => LoopBB.
++  BB->addSuccessor(LoopBB);
++  LoopBB->addSuccessor(RemBB);
++  LoopBB->addSuccessor(LoopBB);
++
++  unsigned CountLo = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountLoLoop = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountLoNew = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountHi = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++  unsigned CountHiLoop = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++  unsigned CountHiNew = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++
++  // BB:
++  // LDIWRdK CountLo, low16(count)
++  // LDIWRdK CountHi, hi16(count)
++
++  // LoopBB:
++  // CountLo_loop = phi [%CountLo, BB], [%CountLo_new, LoopBB]
++  // CountHi_loop = phi [%CountHi, BB], [%CountHi_new, HiopBB]
++  // CountLo_new  = SBIWRdK CountLo_loop, 1
++  // CountHi_new  = SBCIWRdK CountHi_loop, 0
++  // brne LoopBB
++  // FIXME
++
++  // RemBB:
++  // ... (nothing new, could be to fix our delay rounding)
++  // FIXME, for bonus credit on assignment 1
++
++  MI.eraseFromParent(); // The pseudo instruction is gone now.
++  return RemBB;
++}
++
++
+ MachineBasicBlock *
+ AVRTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+                                                MachineBasicBlock *MBB) const {
+@@ -1617,6 +1682,8 @@ AVRTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+   case AVR::MULRdRr:
+   case AVR::MULSRdRr:
+     return insertMul(MI, MBB);
++  case AVR::DelayCycles:
++	return insertDelayCycles(MI, MBB);
+   }
+ 
+   assert((Opc == AVR::Select16 || Opc == AVR::Select8) &&
+diff --git a/lib/Target/AVR/AVRISelLowering.h b/lib/Target/AVR/AVRISelLowering.h
+index 85f9552..50d1e2a 100644
+--- a/lib/Target/AVR/AVRISelLowering.h
++++ b/lib/Target/AVR/AVRISelLowering.h
+@@ -166,6 +166,8 @@ private:
+ private:
+   MachineBasicBlock *insertShift(MachineInstr &MI, MachineBasicBlock *BB) const;
+   MachineBasicBlock *insertMul(MachineInstr &MI, MachineBasicBlock *BB) const;
++  MachineBasicBlock *insertDelayCycles(MachineInstr &MI,
++		  MachineBasicBlock *BB) const;
+ };
+ 
+ } // end namespace llvm
+-- 
+2.7.4
+

@@ -1,0 +1,134 @@
+From 4fbc88f3a8cc9c39ebf87b4cdf5e188913c487eb Mon Sep 17 00:00:00 2001
+From: Roel Jordans <r.jordans@tue.nl>
+Date: Wed, 10 Jan 2018 16:43:58 +0100
+Subject: [PATCH] [AVR] Add support for __builtin_avr_delay_cycles
+
+---
+ include/clang/Basic/BuiltinsAVR.def  | 25 +++++++++++++++++++++++++
+ include/clang/Basic/TargetBuiltins.h | 11 +++++++++++
+ lib/Basic/Targets.cpp                | 21 ++++++++++++++++-----
+ 3 files changed, 52 insertions(+), 5 deletions(-)
+ create mode 100644 include/clang/Basic/BuiltinsAVR.def
+
+diff --git a/include/clang/Basic/BuiltinsAVR.def b/include/clang/Basic/BuiltinsAVR.def
+new file mode 100644
+index 0000000..f5c5be1
+--- /dev/null
++++ b/include/clang/Basic/BuiltinsAVR.def
+@@ -0,0 +1,25 @@
++//===--- BuiltinsAVR.def - AVR Builtin function database ----*- C -*-===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// This file defines the AVR-specific builtin function database.  Users of
++// this file must define the BUILTIN macro to make use of this information.
++//
++//===----------------------------------------------------------------------===//
++
++// The format of this database matches clang/Basic/Builtins.def.
++
++#if defined(BUILTIN) && !defined(LANGBUILTIN)
++#   define LANGBUILTIN(ID, TYPE, ATTRS, BUILTIN_LANG) BUILTIN(ID, TYPE, ATTRS)
++#endif
++
++// Delay cycles
++BUILTIN(__builtin_avr_delay_cycles, "vLUi", "nc")
++
++#undef BUILTIN
++#undef LANGBUILTIN
+diff --git a/include/clang/Basic/TargetBuiltins.h b/include/clang/Basic/TargetBuiltins.h
+index 8f4f5e9..e502e79 100644
+--- a/include/clang/Basic/TargetBuiltins.h
++++ b/include/clang/Basic/TargetBuiltins.h
+@@ -42,6 +42,17 @@ namespace clang {
+     };
+   }
+ 
++  /// \brief AVR builtins
++  namespace AVR {
++    enum {
++      LastTIBuiltin = clang::Builtin::FirstTSBuiltin-1,
++#define BUILTIN(ID, TYPE, ATTRS) BI##ID,
++#include "clang/Basic/BuiltinsAVR.def"
++      LastTSBuiltin
++    };
++  }
++
++
+   /// \brief AArch64 builtins
+   namespace AArch64 {
+   enum {
+diff --git a/lib/Basic/Targets.cpp b/lib/Basic/Targets.cpp
+index b33ab13..86190db 100644
+--- a/lib/Basic/Targets.cpp
++++ b/lib/Basic/Targets.cpp
+@@ -4508,15 +4508,15 @@ X86TargetInfo::convertConstraint(const char *&Constraint) const {
+     switch (Constraint[1]) {
+     default:
+       // Break from inner switch and fall through (copy single char),
+-      // continue parsing after copying the current constraint into 
++      // continue parsing after copying the current constraint into
+       // the return string.
+       break;
+     case 'k':
+       // "^" hints llvm that this is a 2 letter constraint.
+-      // "Constraint++" is used to promote the string iterator 
++      // "Constraint++" is used to promote the string iterator
+       // to the next constraint.
+       return std::string("^") + std::string(Constraint++, 2);
+-    } 
++    }
+     LLVM_FALLTHROUGH;
+   default:
+     return std::string(1, *Constraint);
+@@ -7819,7 +7819,6 @@ public:
+     Builder.defineMacro("__TCELE__");
+     Builder.defineMacro("__TCELE_V1__");
+   }
+-
+ };
+ 
+ class BPFTargetInfo : public TargetInfo {
+@@ -9324,6 +9323,7 @@ static ArrayRef<MCUInfo> AVRMcus = {
+ 
+ // AVR Target
+ class AVRTargetInfo : public TargetInfo {
++	static const Builtin::Info BuiltinInfo[];
+ public:
+   AVRTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
+       : TargetInfo(Triple) {
+@@ -9375,7 +9375,8 @@ public:
+   }
+ 
+   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
+-    return None;
++    return llvm::makeArrayRef(BuiltinInfo,
++      clang::AVR::LastTSBuiltin - Builtin::FirstTSBuiltin);
+   }
+ 
+   BuiltinVaListKind getBuiltinVaListKind() const override {
+@@ -9517,6 +9518,16 @@ protected:
+   std::string CPU;
+ };
+ 
++const Builtin::Info AVRTargetInfo::BuiltinInfo[] = {
++#define BUILTIN(ID, TYPE, ATTRS) \
++  { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr },
++#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) \
++  { #ID, TYPE, ATTRS, HEADER, ALL_LANGUAGES, nullptr },
++#include "clang/Basic/BuiltinsAVR.def"
++};
++
++
++
+ } // end anonymous namespace
+ 
+ //===----------------------------------------------------------------------===//
+-- 
+2.7.4
+

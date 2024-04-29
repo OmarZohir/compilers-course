@@ -1,0 +1,119 @@
+From 9e295d7350a29282373f42648964c2325603cb52 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Wed, 10 Mar 2021 18:52:01 +0100
+Subject: [PATCH 2/3] Added ASAP and ALAP scheduling
+
+---
+ ILPEstimator/Pass.cpp | 62 ++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 58 insertions(+), 4 deletions(-)
+
+diff --git a/ILPEstimator/Pass.cpp b/ILPEstimator/Pass.cpp
+index 85b4757..23df32e 100644
+--- a/ILPEstimator/Pass.cpp
++++ b/ILPEstimator/Pass.cpp
+@@ -2,6 +2,8 @@
+ #include "llvm/IR/BasicBlock.h"
+ #include "llvm/IR/Instructions.h"
+ #include "llvm/Support/raw_ostream.h"
++#include <iterator>
++#include <iostream>
+ 
+ using namespace llvm;
+ 
+@@ -10,18 +12,38 @@ class ILPEstimator : public BasicBlockPass {
+ public:
+   static char ID;
+   int WCET;
++  int maxLatency;
++  std::map<const Instruction *, int> ASAPschedule;
++  std::map<const Instruction *, int> ALAPschedule;
++  //an extra map for cleaner printing
++  std::map<const Instruction *, int, int> ASAPALAPschedule;
+   ILPEstimator() : BasicBlockPass(ID) {}
+-
++  
+   bool runOnBasicBlock(BasicBlock &BB) override {
+     errs() << "Hello: ";
+     errs().write_escaped(BB.getName()) << "\n";
+ 
+     WCET = estimateWCET(BB);
++
++    ASAPschedule.clear();
++    ALAPschedule.clear();
++    
++    maxLatency = scheduleASAP(BB,ASAPschedule);
++    scheduleALAP(BB,ALAPschedule,maxLatency);
++    
+     return false;
+   }
+ 
+   void print(raw_ostream &OS, const Module* = 0) const override {
+ 	  OS << "WCET estimate: " << WCET << "\n";
++
++    //Printing the ASAP and ALAP schedule
++    for (auto it = ALAPschedule.begin(); it != ALAPschedule.end(); it++){
++      it->first->dump(); 
++      OS << "ALAP:  " <<  it->second << "\n"; 
++      OS << "ASAP: " << ASAPschedule.at(it->first) << "\n";
++    }
++    OS << "Maximum Latency  is: " << maxLatency << "\n";
+   }
+ 
+ 
+@@ -41,18 +63,50 @@ public:
+   int estimateWCET(BasicBlock &BB) {
+     int wcet = 0;
+     for(Instruction &inst : BB) 
+-    {
+-      // FIXME, there should be some code here?
+-      //Instruction* 
++    { 
+       wcet += getInstructionLatency(&inst); 
+     }
+     return wcet;
+   }
+ 
++  int scheduleASAP(BasicBlock &BB, std::map<const Instruction *, int> &schedule) {
++    int maxLatency = 0;
+ 
++    for(Instruction &inst : BB) {
++      for(User *user : inst.users()) {
++        Instruction *I = dyn_cast<Instruction>(user); 
++        if(I && I->getParent() == &BB && !isa<PHINode>(I)) {
++        // longest-path algorithm
++          schedule[&(*I)] = std::max(schedule[&(*I)], schedule[&inst] + getInstructionLatency(&inst));
++        }
++      }
++      maxLatency = std::max(maxLatency, schedule[&inst] + getInstructionLatency(&inst));
++    }
++    return maxLatency;
++}
++
++  void scheduleALAP(BasicBlock &BB, std::map<const Instruction *, int> &schedule, int ASAPFinishTime) {
++    // Iterate over BB’s instructions in reverse
++    for(auto it=BB.rbegin(), end=BB.rend(); it != end; it++) {
++      int EarliestUserALAP = ASAPFinishTime;
++      for(User *user : it->users()) {
++        Instruction *I = dyn_cast<Instruction>(user);
++        //1)Find earliest ALAP of all of the users of an instruction
++        if(I && I->getParent() == &BB && !isa<PHINode>(I)) {
++          if (schedule[&*I] > 0)
++            EarliestUserALAP = std::min(schedule[&*I], EarliestUserALAP);
++        }
++      }
++      //2)Compute instr ALAP
++      if(!isa<PHINode>(&*it)) {
++        schedule[&*it] = EarliestUserALAP  - getInstructionLatency(&*it);
++      }
++    }
++  }
+ }; // end of class ILPEstimator
+ }  // end of anonymous namespace
+ 
++
+ char ILPEstimator::ID = 0;
+ 
+ static RegisterPass<ILPEstimator> X("ilp-estimate", "ILP Estimator Pass",
+-- 
+2.17.1
+

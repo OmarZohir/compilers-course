@@ -1,0 +1,27 @@
+From 243359172d0ca5985f2dff958f4c22e114601001 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Fri, 19 Feb 2021 04:19:48 +0100
+Subject: [PATCH 3/3] Added support for lowering i32 constants
+
+---
+ lib/Target/AVR/AVRISelLowering.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/Target/AVR/AVRISelLowering.cpp b/lib/Target/AVR/AVRISelLowering.cpp
+index f78a5772..071f6c37 100644
+--- a/lib/Target/AVR/AVRISelLowering.cpp
++++ b/lib/Target/AVR/AVRISelLowering.cpp
+@@ -725,8 +725,8 @@ void AVRTargetLowering::ReplaceNodeResults(SDNode *N,
+     }
+ 
+     const uint32_t C = cast<ConstantSDNode>(N)->getZExtValue();
+-    const uint16_t lo = C && 0x0000FFFF;
+-    const uint16_t hi = C && 0xFFFF0000;
++    const uint16_t lo = C ;
++    const uint16_t hi = C << 16;
+     if (split) {
+       // Split into Lo16, Hi16, low part first
+       // FIXME
+-- 
+2.17.1
+

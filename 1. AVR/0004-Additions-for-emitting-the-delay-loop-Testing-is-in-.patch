@@ -1,0 +1,194 @@
+From 032089c6d1d50bc18f39b8fdb85a76ef1e81d515 Mon Sep 17 00:00:00 2001
+From: Omar <o.omar.ahmed.mohamed.zohir.aly@student.tue.nl>
+Date: Sun, 21 Feb 2021 21:37:31 +0100
+Subject: [PATCH 4/4] Additions for emitting the delay loop, Testing is in
+ patch 3
+
+---
+ lib/Target/AVR/AVRISelLowering.cpp | 99 +++++++++++++++++++++++++++++-
+ lib/Target/AVR/AVRISelLowering.h   |  2 +
+ lib/Target/AVR/AVRInstrInfo.td     | 10 +++
+ 3 files changed, 108 insertions(+), 3 deletions(-)
+
+diff --git a/lib/Target/AVR/AVRISelLowering.cpp b/lib/Target/AVR/AVRISelLowering.cpp
+index 071f6c37..fe793fe1 100644
+--- a/lib/Target/AVR/AVRISelLowering.cpp
++++ b/lib/Target/AVR/AVRISelLowering.cpp
+@@ -726,7 +726,7 @@ void AVRTargetLowering::ReplaceNodeResults(SDNode *N,
+ 
+     const uint32_t C = cast<ConstantSDNode>(N)->getZExtValue();
+     const uint16_t lo = C ;
+-    const uint16_t hi = C << 16;
++    const uint16_t hi = (C >> 16);
+     if (split) {
+       // Split into Lo16, Hi16, low part first
+       // FIXME
+@@ -746,6 +746,7 @@ void AVRTargetLowering::ReplaceNodeResults(SDNode *N,
+       
+       Results.push_back(Lo16);
+       Results.push_back(Hi16);
++      
+     }
+ 
+     else {
+@@ -1617,8 +1618,98 @@ MachineBasicBlock *AVRTargetLowering::insertMul(MachineInstr &MI,
+   return BB;
+ }
+ 
+-MachineBasicBlock *
+-AVRTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
++MachineBasicBlock * AVRTargetLowering::insertDelayCycles(MachineInstr &MI,
++	  MachineBasicBlock *BB) const {
++  MachineFunction *F = BB->getParent();
++  MachineRegisterInfo &RI = F->getRegInfo();
++  const AVRTargetMachine &TM = (const AVRTargetMachine &)getTargetMachine();
++  const TargetInstrInfo &TII = *TM.getSubtargetImpl()->getInstrInfo();
++  DebugLoc dl = MI.getDebugLoc();
++
++  // Check the delay to see if we've got anything to do here
++  unsigned CycleCount = MI.getOperand(0).getImm();
++
++  // Reduce the CycleCount to compensate for loop operations
++  // FIXME
++  CycleCount = CycleCount/6; 
++
++  const BasicBlock *LLVM_BB = BB->getBasicBlock();
++  MachineFunction::iterator I;
++  for (I = F->begin(); I != F->end() && &(*I) != BB; ++I);
++  if (I != F->end()) ++I;
++
++  // Create loop block.
++  MachineBasicBlock *LoopBB = F->CreateMachineBasicBlock(LLVM_BB);
++  MachineBasicBlock *RemBB = F->CreateMachineBasicBlock(LLVM_BB);
++
++  F->insert(I, LoopBB);
++  F->insert(I, RemBB);
++
++  // Update machine-CFG edges by transferring all successors of the current
++  // block to the block containing instructions after delay.
++  RemBB->splice(RemBB->begin(), BB, std::next(MachineBasicBlock::iterator(MI)),
++     BB->end());
++  RemBB->transferSuccessorsAndUpdatePHIs(BB);
++
++  // Add edges BB => LoopBB => RemBB, BB => RemBB, LoopBB => LoopBB.
++  BB->addSuccessor(LoopBB);
++  LoopBB->addSuccessor(RemBB);
++  LoopBB->addSuccessor(LoopBB);
++
++  unsigned CountLo = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountLoLoop = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountLoNew = RI.createVirtualRegister(&AVR::IWREGSRegClass);
++  unsigned CountHi = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++  unsigned CountHiLoop = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++  unsigned CountHiNew = RI.createVirtualRegister(&AVR::DLDREGSRegClass);
++
++  unsigned low16 = CycleCount & 0x0000FFFF ;
++  unsigned hi16 = (CycleCount >> 16) & 0x0000FFFF;  
++  // BB:
++  // LDIWRdK CountLo, low16(count)
++  // LDIWRdK CountHi, hi16(count)
++  BuildMI(BB, dl, TII.get(AVR::LDIWRdK), CountLo)
++      .addImm(low16);
++
++  BuildMI(BB, dl, TII.get(AVR::LDIWRdK), CountHi)
++      .addImm(hi16);
++
++  // LoopBB:
++  // CountLo_loop = phi [%CountLo, BB], [%CountLo_new, LoopBB]
++  // CountHi_loop = phi [%CountHi, BB], [%CountHi_new, LoopBB]
++  BuildMI(LoopBB, dl, TII.get(AVR::PHI), CountLoLoop)
++      .addReg(CountLo)
++      .addMBB(BB)
++      .addReg(CountLoNew)
++      .addMBB(LoopBB);
++  BuildMI(LoopBB, dl, TII.get(AVR::PHI), CountHiLoop)
++      .addReg(CountHi)
++      .addMBB(BB)
++      .addReg(CountHiNew)
++      .addMBB(LoopBB);
++
++  // CountLo_new  = SBIWRdK CountLo_loop, 1
++  // CountHi_new  = SBCIWRdK CountHi_loop, 0
++  BuildMI(LoopBB, dl, TII.get(AVR::SBIWRdK), CountLoNew)
++      .addReg(CountLoLoop)
++      .addImm(1);
++  BuildMI(LoopBB, dl, TII.get(AVR::SBCIWRdK), CountHiNew)
++      .addReg(CountHiLoop)
++      .addImm(0);
++  // brne LoopBB
++  BuildMI(LoopBB, dl, TII.get(AVR::BRNEk)).addMBB(LoopBB);
++  // FIXME
++
++  // RemBB:
++  // ... (nothing new, could be to fix our delay rounding)
++  // FIXME, for bonus credit on assignment 1
++
++  MI.eraseFromParent(); // The pseudo instruction is gone now.
++  return RemBB;
++}
++
++
++MachineBasicBlock * AVRTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+                                                MachineBasicBlock *MBB) const {
+   int Opc = MI.getOpcode();
+ 
+@@ -1639,6 +1730,8 @@ AVRTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+   case AVR::MULRdRr:
+   case AVR::MULSRdRr:
+     return insertMul(MI, MBB);
++  case AVR::DelayCycles:
++	  return insertDelayCycles(MI, MBB);
+   }
+ 
+   assert((Opc == AVR::Select16 || Opc == AVR::Select8) &&
+diff --git a/lib/Target/AVR/AVRISelLowering.h b/lib/Target/AVR/AVRISelLowering.h
+index 85f9552c..50d1e2a8 100644
+--- a/lib/Target/AVR/AVRISelLowering.h
++++ b/lib/Target/AVR/AVRISelLowering.h
+@@ -166,6 +166,8 @@ private:
+ private:
+   MachineBasicBlock *insertShift(MachineInstr &MI, MachineBasicBlock *BB) const;
+   MachineBasicBlock *insertMul(MachineInstr &MI, MachineBasicBlock *BB) const;
++  MachineBasicBlock *insertDelayCycles(MachineInstr &MI,
++		  MachineBasicBlock *BB) const;
+ };
+ 
+ } // end namespace llvm
+diff --git a/lib/Target/AVR/AVRInstrInfo.td b/lib/Target/AVR/AVRInstrInfo.td
+index 3422dcf8..0307bebf 100644
+--- a/lib/Target/AVR/AVRInstrInfo.td
++++ b/lib/Target/AVR/AVRInstrInfo.td
+@@ -528,6 +528,7 @@ Defs = [SREG] in
+                   [(set i8:$rd, (add i8:$src, -1)), (implicit SREG)]>;
+ }
+ 
++
+ //===----------------------------------------------------------------------===//
+ // Multiplication
+ //===----------------------------------------------------------------------===//
+@@ -538,6 +539,7 @@ Defs = [R1, R0, SREG] in
+   // MUL Rd, Rr
+   // Multiplies Rd by Rr and places the result into R1:R0.
+   let usesCustomInserter = 1 in {
++    
+     def MULRdRr : FRdRr<0b1001, 0b11,
+                         (outs),
+                         (ins GPR8:$lhs, GPR8:$rhs),
+@@ -551,6 +553,14 @@ Defs = [R1, R0, SREG] in
+                              "muls\t$lhs, $rhs",
+                              []>,
+                    Requires<[SupportsMultiplication]>;
++    //===----------------------------------------------------------------------===//
++    // Delay Intrinsic
++    //===----------------------------------------------------------------------===//
++    let Defs = [SREG] in
++    def DelayCycles : Pseudo<(outs),
++                      (ins i32imm:$delay),
++                      "# DelayCycles PSEUDO",
++                      [(int_avr_delay_cycles i32:$delay)]>;
+   }
+ 
+   def MULSURdRr : FMUL2RdRr<1,
+-- 
+2.17.1
+
